@@ -1,0 +1,399 @@
+---
+title: "Sensibilización molecular a Der p (ácaro del polvo doméstico)"
+subtitle: "pMenor · Estadística clínica en R"
+output:
+  github_document:
+    toc: true
+    fig_width: 7
+    fig_height: 4.7
+    dev: png
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      comment = "#>", fig.path = "output/", dpi = 144)
+```
+
+## 0. Cabecera
+
+**Artículo:** Sensitization patterns to molecular allergens of house dust mites
+(*Dermatophagoides pteronyssinus*) on the Canary Islands. *Allergo J Int* 2025.
+<https://doi.org/10.1007/s40629-025-00349-5>
+
+**Objetivo.** Describir el perfil de sensibilización a los componentes
+moleculares de *D. pteronyssinus* (Der p): qué componentes predominan, cómo
+cambian con la edad, cómo se agrupan entre sí y si hay perfiles de pacientes
+diferenciados.
+
+**Diseño.** Estudio observacional, retrospectivo y transversal. Pacientes con
+sospecha de enfermedad alérgica estudiados con la plataforma multiplex ALEX2.
+
+**Variables principales**
+
+| Variable | Descripción |
+|---|---|
+| `id`        | Identificador ficticio del paciente |
+| `age`       | Edad en años (vacía si no consta la fecha de nacimiento) |
+| `total_ige` | IgE total (kU/L) |
+| `der_p_1` … `der_p_23` | IgE específica (kU/L) frente a 9 componentes de Der p: 1, 2, 5, 7, 10, 11, 20, 21 y 23. Los valores "< 0,10" se guardan como 0,10 |
+
+> **Datos simulados.** Este repositorio no contiene datos de pacientes. El
+> archivo `data/der_p_simulado.csv` lo genera `R/simular_datos.R` con la misma
+> estructura que los datos reales y prevalencias parecidas a las publicadas.
+> Las cifras se parecen, pero no son las del artículo.
+
+## 1. Configuración
+
+```{r config}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(pwr)           # precisión y diferencia mínima detectable
+library(dunn.test)     # comparaciones post hoc tras Kruskal-Wallis
+library(ComplexUpset)  # gráfico UpSet de co-sensibilización
+library(pheatmap)      # mapa de calor
+
+source("R/theme_pmenor.R")
+usar_pmenor(base_size = 12, fondo = "papel")
+
+set.seed(123)
+
+ALLERGENS <- c("der_p_1", "der_p_2", "der_p_5", "der_p_7", "der_p_10",
+               "der_p_11", "der_p_20", "der_p_21", "der_p_23")
+ALLERGEN_LABELS <- setNames(sub("der_p_", "Der p ", ALLERGENS), ALLERGENS)
+
+SENS_CUTOFF <- 0.35   # sensibilización: IgE específica >= 0,35 kU/L
+AGE_BREAKS  <- c(-Inf, 5, 11, 17, Inf)
+AGE_LABELS  <- c("0-5", "6-11", "12-17", "18+")
+K_CLUSTERS  <- 3      # número de perfiles en el k-means
+```
+
+### Tamaño muestral
+
+Al ser retrospectivo, no se calculó el tamaño muestral a priori. Lo que sí se
+puede comprobar es qué permitía la muestra disponible, sin usar los resultados
+obtenidos.
+
+**Precisión.** ¿Con qué margen se estima una prevalencia baja, como la de
+Der p 2 (en torno al 7 %), con 1.685 pacientes?
+
+```{r precision}
+n_total <- 1685
+p_low   <- 0.073
+margin  <- qnorm(0.975) * sqrt(p_low * (1 - p_low) / n_total)
+round(100 * margin, 1)   # margen de error del IC 95 %, en puntos porcentuales
+```
+
+**Diferencia mínima detectable.** Con los tamaños de grupo de edad
+disponibles, ¿qué diferencia se podía detectar con una potencia del 80 %? Es
+la forma honesta de responder a "¿daba la muestra para comparar grupos?": no
+depende del resultado observado.
+
+```{r mdd}
+# Proporción mínima detectable en un grupo pequeño frente a los adultos (n = 395),
+# partiendo de una prevalencia en adultos del 5 %
+detectable_p <- function(n_small, n_ref = 395, p_ref = 0.05) {
+  h <- pwr.2p2n.test(n1 = n_small, n2 = n_ref, power = 0.80, sig.level = 0.05)$h
+  sin(asin(sqrt(p_ref)) + h / 2)^2
+}
+round(100 * c("0-5 (n = 44)"   = detectable_p(44),
+              "6-11 (n = 73)"  = detectable_p(73),
+              "12-17 (n = 70)" = detectable_p(70)), 1)
+
+# Correlación mínima detectable con toda la cohorte
+round(pwr.r.test(n = n_total, power = 0.80, sig.level = 0.05)$r, 3)
+```
+
+Con los grupos infantiles se detectan diferencias grandes (por ejemplo, un
+5 % en adultos frente a un 17-20 % en niños), pero no diferencias pequeñas.
+Para la correlación, cualquier asociación mínimamente relevante es detectable.
+
+## 2. Datos
+
+```{r data}
+if (!file.exists("data/der_p_simulado.csv")) source("R/simular_datos.R")
+der_p <- read.csv("data/der_p_simulado.csv")
+
+der_p <- der_p |>
+  mutate(
+    age_group = cut(age, breaks = AGE_BREAKS, labels = AGE_LABELS),
+    # Número de componentes positivos (los ausentes no cuentan)
+    n_sens    = rowSums(across(all_of(ALLERGENS), \(x) x >= SENS_CUTOFF), na.rm = TRUE),
+    any_sens  = n_sens >= 1,
+    # Carga alergénica: suma de IgE específica a los 9 componentes
+    der_p_load = rowSums(across(all_of(ALLERGENS)), na.rm = TRUE)
+  )
+
+glimpse(der_p)
+```
+
+La edad solo consta en una parte de los pacientes. Los análisis por edad usan
+esos pacientes; el resto, la cohorte completa.
+
+```{r age-availability}
+der_p |>
+  summarise(total = n(), with_age = sum(!is.na(age)), without_age = sum(is.na(age)))
+
+table(der_p$age_group, useNA = "ifany")
+```
+
+## 3. Descriptivos
+
+```{r descriptives}
+der_p |>
+  summarise(
+    n                = n(),
+    age_median       = median(age, na.rm = TRUE),
+    total_ige_median = median(total_ige),
+    total_ige_q1     = quantile(total_ige, 0.25),
+    total_ige_q3     = quantile(total_ige, 0.75),
+    any_sens_pct     = round(100 * mean(any_sens), 1),
+    n_sens_range     = paste(range(n_sens), collapse = "-")
+  )
+```
+
+## 4. Análisis principal
+
+### 4.1. Prevalencia de sensibilización a cada componente
+
+Para cada componente, el denominador son los pacientes con ese componente
+medido (los valores ausentes no cuentan como negativos).
+
+```{r prevalence}
+prev_overall <- der_p |>
+  pivot_longer(all_of(ALLERGENS), names_to = "allergen", values_to = "ige") |>
+  filter(!is.na(ige)) |>
+  group_by(allergen) |>
+  summarise(n = n(), positives = sum(ige >= SENS_CUTOFF),
+            prevalence = 100 * positives / n, .groups = "drop") |>
+  mutate(allergen = ALLERGEN_LABELS[allergen]) |>
+  arrange(desc(prevalence))
+
+prev_overall |> mutate(prevalence = round(prevalence, 1))
+```
+
+```{r fig-prevalence, fig.cap = "Prevalencia de sensibilización a cada componente de Der p."}
+ggplot(prev_overall, aes(reorder(allergen, prevalence), prevalence)) +
+  geom_col(width = 0.7) +
+  geom_col(data = \(d) filter(d, allergen == "Der p 2"),
+           fill = pmenor_col[["burdeos"]], width = 0.7) +
+  coord_flip() +
+  scale_y_continuous(labels = \(x) paste0(x, " %"), expand = expansion(c(0, 0.05))) +
+  labs(x = NULL, y = "Pacientes sensibilizados",
+       caption = "Datos simulados. En burdeos, Der p 2: el alérgeno mayor clásico, aquí minoritario.") +
+  theme(panel.grid.major.y = element_blank(),
+        panel.grid.major.x = element_line(colour = pmenor_col[["linea"]]))
+```
+
+### 4.2. Sensibilización por grupo de edad
+
+```{r prevalence-age}
+by_age <- der_p |>
+  filter(!is.na(age_group)) |>
+  pivot_longer(all_of(ALLERGENS), names_to = "allergen", values_to = "ige") |>
+  filter(!is.na(ige)) |>
+  group_by(age_group, allergen) |>
+  summarise(prevalence = 100 * mean(ige >= SENS_CUTOFF), .groups = "drop") |>
+  mutate(allergen = factor(ALLERGEN_LABELS[allergen],
+                           levels = prev_overall$allergen))  # mismo orden que 4.1
+
+by_age |>
+  mutate(prevalence = round(prevalence, 1)) |>
+  pivot_wider(names_from = age_group, values_from = prevalence)
+```
+
+```{r fig-prevalence-age, fig.cap = "Prevalencia de sensibilización por grupo de edad."}
+ggplot(by_age, aes(allergen, prevalence, colour = age_group, group = age_group)) +
+  geom_line() +
+  geom_point(size = 2) +
+  scale_colour_manual(values = c("0-5" = pmenor_col[["linea"]], "6-11" = pmenor_col[["gris"]],
+                                 "12-17" = pmenor_col[["burdeos"]], "18+" = pmenor_col[["tinta"]])) +
+  scale_y_continuous(labels = \(x) paste0(x, " %")) +
+  labs(x = NULL, y = "Pacientes sensibilizados", caption = "Datos simulados")
+```
+
+¿Cambia la prevalencia con la edad? Un test por componente: χ² o, si alguna
+frecuencia esperada es menor de 5, exacto de Fisher.
+
+```{r test-age}
+test_age <- function(allergen) {
+  d   <- der_p |> filter(!is.na(age_group), !is.na(.data[[allergen]]))
+  tab <- table(d[[allergen]] >= SENS_CUTOFF, d$age_group)
+  expected <- suppressWarnings(chisq.test(tab)$expected)
+  if (any(expected < 5)) {
+    data.frame(test = "Fisher", p = fisher.test(tab)$p.value)
+  } else {
+    data.frame(test = "Chi-squared", p = chisq.test(tab)$p.value)
+  }
+}
+
+age_tests <- bind_rows(lapply(ALLERGENS, test_age)) |>
+  mutate(allergen = ALLERGEN_LABELS[ALLERGENS],
+         p = signif(p, 2)) |>
+  select(allergen, test, p)
+age_tests
+```
+
+### 4.3. IgE total y número de componentes positivos
+
+La IgE total es muy asimétrica, así que se compara con tests no paramétricos y
+se dibuja en escala logarítmica.
+
+```{r correlation}
+cor.test(der_p$total_ige, der_p$n_sens, method = "spearman", exact = FALSE)
+```
+
+```{r fig-correlation, fig.cap = "IgE total según el número de componentes de Der p positivos."}
+ggplot(der_p, aes(factor(n_sens), total_ige)) +
+  geom_jitter(width = 0.2, alpha = 0.15, size = 0.8) +
+  geom_boxplot(outlier.shape = NA, width = 0.5, linewidth = grosor_pmenor(3)) +
+  scale_y_log10(labels = numeros_pmenor()) +
+  labs(x = "Componentes de Der p positivos", y = "IgE total (kU/L, escala log)",
+       caption = "Datos simulados")
+```
+
+### 4.4. IgE total y carga alergénica por edad
+
+Kruskal-Wallis para comparar los cuatro grupos y, si hay diferencias, Dunn con
+ajuste de Bonferroni para ver entre qué grupos están.
+
+```{r age-ige}
+der_p_age <- der_p |> filter(!is.na(age_group))
+
+# IgE total
+kruskal.test(total_ige ~ age_group, data = der_p_age)
+
+# Carga alergénica total a Der p (suma de los 9 componentes)
+kruskal.test(der_p_load ~ age_group, data = der_p_age)
+# dunn.test() escribe su propia tabla en consola; se recoge el resultado en un data frame
+dunn_table <- function(x, g) {
+  invisible(capture.output(
+    dn <- dunn.test(x, g, method = "bonferroni", kw = FALSE, table = FALSE)
+  ))
+  data.frame(comparison = dn$comparisons, z = round(dn$Z, 2),
+             p_adjusted = signif(dn$P.adjusted, 2))
+}
+dunn_table(der_p_age$der_p_load, der_p_age$age_group)
+```
+
+### 4.5. IgE específica por edad, componente a componente
+
+```{r age-sige}
+age_sige <- lapply(ALLERGENS, function(a) {
+  d  <- der_p_age |> filter(!is.na(.data[[a]]))
+  kw <- kruskal.test(d[[a]] ~ d$age_group)
+  # Comparación de interés del artículo: adolescentes (12-17) frente a 0-5 años
+  dn <- dunn_table(d[[a]], d$age_group)
+  data.frame(allergen = ALLERGEN_LABELS[[a]],
+             p_kruskal = signif(kw$p.value, 2),
+             p_12_17_vs_0_5 = dn$p_adjusted[dn$comparison == "0-5 - 12-17"])
+})
+bind_rows(age_sige)
+```
+
+## 5. Análisis secundarios: patrones de co-sensibilización
+
+### 5.1. Combinaciones más frecuentes (UpSet)
+
+```{r fig-upset, fig.cap = "Combinaciones de componentes positivos más frecuentes.", fig.height = 5.5}
+binary <- der_p |>
+  mutate(across(all_of(ALLERGENS), \(x) !is.na(x) & x >= SENS_CUTOFF)) |>
+  select(all_of(ALLERGENS)) |>
+  rename_with(\(x) ALLERGEN_LABELS[x])
+
+upset(binary, intersect = unname(ALLERGEN_LABELS), name = NULL, min_size = 15,
+      base_annotations = list("Pacientes" = intersection_size(
+        fill = pmenor_col[["tinta"]], text = list(size = 2.5))),
+      set_sizes = upset_set_size(geom = geom_bar(fill = pmenor_col[["gris"]])) +
+        ylab("Pacientes"),
+      width_ratio = 0.2,
+      themes = upset_default_themes(text = element_text(family = "IBM Plex Mono",
+                                                        colour = pmenor_col[["tinta"]])))
+```
+
+### 5.2. Mapa de calor de la IgE específica
+
+Cada fila es un paciente, escalado por filas: muestra qué componentes pesan más
+en cada paciente, no el nivel absoluto.
+
+```{r fig-heatmap, fig.cap = "IgE específica a los componentes de Der p (escalada por paciente).", fig.height = 6}
+heat <- der_p |>
+  select(all_of(ALLERGENS)) |>
+  mutate(across(everything(), \(x) coalesce(x, 0))) |>
+  rename_with(\(x) ALLERGEN_LABELS[x]) |>
+  as.matrix()
+heat <- heat[apply(heat, 1, sd) > 0, ]   # sin variación no se puede escalar
+
+pheatmap(heat, scale = "row", show_rownames = FALSE, treeheight_row = 0,
+         color = colorRampPalette(c(pmenor_col[["papel"]], pmenor_col[["gris"]],
+                                    pmenor_col[["burdeos"]]))(50),
+         border_color = NA, fontfamily = "IBM Plex Mono")
+```
+
+### 5.3. Análisis de componentes principales (PCA)
+
+Sobre la IgE específica estandarizada. Los ausentes se tratan como 0.
+
+```{r pca}
+derp_matrix <- der_p |>
+  select(all_of(ALLERGENS)) |>
+  mutate(across(everything(), \(x) coalesce(x, 0)))
+
+pca <- prcomp(derp_matrix, scale. = TRUE)
+summary(pca)$importance[, 1:3]
+
+# Qué componentes de Der p pesan más en los dos primeros ejes
+round(pca$rotation[, 1:2], 2)
+```
+
+```{r fig-pca, fig.cap = "PCA de los perfiles de sensibilización."}
+var_pc <- round(100 * summary(pca)$importance[2, 1:2], 1)
+ggplot(as.data.frame(pca$x), aes(PC1, PC2)) +
+  geom_point(alpha = 0.3, size = 1) +
+  labs(x = paste0("PC1 (", var_pc[1], " %)"), y = paste0("PC2 (", var_pc[2], " %)"),
+       caption = "Datos simulados")
+```
+
+### 5.4. Perfiles de pacientes (k-means)
+
+k-means con `r K_CLUSTERS` grupos sobre la misma matriz estandarizada.
+
+```{r kmeans}
+set.seed(123)   # k-means parte de centros aleatorios: semilla fija para reproducirlo
+km <- kmeans(scale(derp_matrix), centers = K_CLUSTERS)
+der_p$cluster <- factor(paste("Perfil", km$cluster))
+
+# Perfil de cada grupo: tamaño, IgE total y componentes positivos
+der_p |>
+  group_by(cluster) |>
+  summarise(n = n(), total_ige_median = median(total_ige),
+            n_sens_median = median(n_sens),
+            der_p_load_median = round(median(der_p_load), 1))
+
+# Distribución por edad (solo pacientes con edad registrada)
+cluster_age <- table(der_p$cluster, der_p$age_group)
+cluster_age
+round(100 * prop.table(cluster_age, margin = 2), 1)   # % dentro de cada grupo de edad
+chisq.test(cluster_age)
+```
+
+```{r fig-kmeans, fig.cap = "Perfiles de k-means según carga alergénica a Der p e IgE total."}
+ggplot(filter(der_p, der_p_load > 0), aes(der_p_load, total_ige, colour = cluster)) +
+  geom_point(alpha = 0.5, size = 1) +
+  scale_colour_manual(values = c(pmenor_col[["tinta"]], pmenor_col[["burdeos"]],
+                                 pmenor_col[["linea"]])) +
+  scale_x_log10(labels = numeros_pmenor()) +
+  scale_y_log10(labels = numeros_pmenor()) +
+  labs(x = "Carga alergénica a Der p (kU/L, escala log)",
+       y = "IgE total (kU/L, escala log)", caption = "Datos simulados")
+```
+
+## 6. Figuras
+
+Las figuras se guardan en `output/` al ejecutar el documento (secciones 4 y 5).
+
+## 7. Información de la sesión
+
+```{r session}
+sessionInfo()
+```

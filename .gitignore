@@ -1,0 +1,19 @@
+# R
+.Rhistory
+.RData
+.Rproj.user/
+.Ruserdata
+*.Rproj
+
+# Datos reales: nunca se suben
+*.xlsx
+*.xls
+*.ods
+*.sav
+data/*
+!data/der_p_simulado.csv
+
+# Sistema
+.DS_Store
+Thumbs.db
+~$*
