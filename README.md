@@ -64,12 +64,12 @@ Las cifras se parecen a las publicadas, pero no son las mismas.
 ## Cómo reproducirlo
 
 1. Clona el repositorio y abre la carpeta como proyecto de RStudio.
-2. Instala los paquetes:
+2. Instala los paquetes con las mismas versiones que se usaron (quedan
+   registradas en `renv.lock`):
 
    ```r
-   install.packages(c("dplyr", "tidyr", "ggplot2", "pwr", "dunn.test",
-                      "ComplexUpset", "pheatmap", "rmarkdown", "scales",
-                      "svglite", "systemfonts"))
+   install.packages("renv")
+   renv::restore()
    ```
 
 3. Ejecuta `rmarkdown::render("analisis.Rmd")`.
