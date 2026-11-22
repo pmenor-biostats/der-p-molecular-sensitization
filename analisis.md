@@ -47,12 +47,12 @@ plataforma multiplex ALEX2.
 
 **Variables principales**
 
-| Variable               | Descripción                                                                                                                        |
-|------------------------|------------------------------------------------------------------------------------------------------------------------------------|
-| `id`                   | Identificador ficticio del paciente                                                                                                |
-| `age`                  | Edad en años (vacía si no consta la fecha de nacimiento)                                                                           |
-| `total_ige`            | IgE total (kU/L)                                                                                                                   |
-| `der_p_1` … `der_p_23` | IgE específica (kU/L) frente a 9 componentes de Der p: 1, 2, 5, 7, 10, 11, 20, 21 y 23. Los valores “\< 0,10” se guardan como 0,10 |
+| Variable               | Descripción                                                                                                                         |
+|------------------------|-------------------------------------------------------------------------------------------------------------------------------------|
+| `id`                   | Identificador ficticio del paciente                                                                                                 |
+| `age`                  | Edad en años (vacía si no consta la fecha de nacimiento)                                                                            |
+| `total_ige`            | IgE total (kU/L)                                                                                                                    |
+| `der_p_1` … `der_p_23` | IgE específica (kUA/L) frente a 9 componentes de Der p: 1, 2, 5, 7, 10, 11, 20, 21 y 23. Los valores “\< 0,10” se guardan como 0,10 |
 
 > **Datos simulados.** Este repositorio no contiene datos de pacientes.
 > El archivo `data/der_p_simulado.csv` lo genera `R/simular_datos.R` con
@@ -79,7 +79,7 @@ ALLERGENS <- c("der_p_1", "der_p_2", "der_p_5", "der_p_7", "der_p_10",
                "der_p_11", "der_p_20", "der_p_21", "der_p_23")
 ALLERGEN_LABELS <- setNames(sub("der_p_", "Der p ", ALLERGENS), ALLERGENS)
 
-SENS_CUTOFF <- 0.35   # sensibilización: IgE específica >= 0,35 kU/L
+SENS_CUTOFF <- 0.35   # sensibilización: IgE específica >= 0,35 kUA/L
 AGE_BREAKS  <- c(-Inf, 5, 11, 17, Inf)
 AGE_LABELS  <- c("0-5", "6-11", "12-17", "18+")
 K_CLUSTERS  <- 3      # número de perfiles en el k-means
@@ -620,7 +620,7 @@ ggplot(filter(der_p, der_p_load > 0), aes(der_p_load, total_ige, colour = cluste
                                  pmenor_col[["linea"]])) +
   scale_x_log10(labels = numeros_pmenor()) +
   scale_y_log10(labels = numeros_pmenor()) +
-  labs(x = "Carga alergénica a Der p (kU/L, escala log)",
+  labs(x = "Carga alergénica a Der p (kUA/L, escala log)",
        y = "IgE total (kU/L, escala log)", caption = "Datos simulados")
 ```
 

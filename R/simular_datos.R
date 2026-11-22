@@ -5,7 +5,7 @@
 # Qué reproduce (de forma aproximada):
 #   - n = 1685 pacientes; solo 582 con edad registrada
 #     (0-5: 44; 6-11: 73; 12-17: 70; 18+: 395).
-#   - La prevalencia de sensibilización (IgE específica >= 0,35 kU/L) a los
+#   - La prevalencia de sensibilización (IgE específica >= 0,35 kUA/L) a los
 #     nueve componentes de Der p en cada grupo de edad.
 #   - La co-sensibilización: Der p 1, 7 y 20 van muy juntos; Der p 2, 5 y 10
 #     van casi por libre.

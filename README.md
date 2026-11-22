@@ -21,12 +21,12 @@ diferenciados?
 ## El análisis
 
 1.685 pacientes estudiados con la plataforma multiplex ALEX2, con IgE
-específica frente a 9 componentes de Der p. Sensibilización: IgE ≥ 0,35 kU/L.
+específica frente a 9 componentes de Der p. Sensibilización: IgE ≥ 0,35 kUA/L.
 
 | Pregunta | Método |
 |---|---|
 | ¿Qué componentes predominan? | Prevalencia de sensibilización por componente |
-| ¿Cambia con la edad? | χ² o Fisher por componente; Kruskal-Wallis y Dunn para niveles de IgE. |
+| ¿Cambia con la edad? | χ² o Fisher por componente; Kruskal-Wallis y Dunn para niveles de IgE |
 | ¿Más componentes, más IgE total? | Correlación de Spearman |
 | ¿Qué componentes van juntos? | Gráfico UpSet, mapa de calor y análisis de componentes principales |
 | ¿Hay perfiles de pacientes? | k-means (k = 3) y su distribución por edad |
